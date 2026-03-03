@@ -4,48 +4,6 @@ from abc import ABC, abstractmethod
 import math
 import numpy as np
 
-
-def _exp(z: np.ndarray) -> np.ndarray:
-    """Element-wise exponential using math.exp instead of np.exp."""
-    out = np.empty_like(z, dtype=np.float64)
-    for i in range(z.size):
-        v = float(z.flat[i])
-        if v > 500.0:
-            v = 500.0
-        elif v < -500.0:
-            v = -500.0
-        out.flat[i] = math.exp(v)
-    return out
-
-
-def _max_last_axis(z: np.ndarray) -> np.ndarray:
-    """Max along the last axis (keepdims=True) without np.max."""
-    rows = z.reshape(-1, z.shape[-1])
-    n_rows, n_cols = rows.shape
-    out = np.empty((n_rows, 1), dtype=z.dtype)
-    for r in range(n_rows):
-        m = float(rows[r, 0])
-        for c in range(1, n_cols):
-            val = float(rows[r, c])
-            if val > m:
-                m = val
-        out[r, 0] = m
-    return out.reshape(z.shape[:-1] + (1,))
-
-
-def _sum_last_axis(z: np.ndarray) -> np.ndarray:
-    """Sum along the last axis (keepdims=True) without np.sum."""
-    rows = z.reshape(-1, z.shape[-1])
-    n_rows, n_cols = rows.shape
-    out = np.empty((n_rows, 1), dtype=z.dtype)
-    for r in range(n_rows):
-        s = 0.0
-        for c in range(n_cols):
-            s += float(rows[r, c])
-        out[r, 0] = s
-    return out.reshape(z.shape[:-1] + (1,))
-
-
 class Activation(ABC):
     """Base class for activation functions."""
 
@@ -70,6 +28,7 @@ class Activation(ABC):
 # Concrete activations
 # ──────────────────────────────────────────────
 
+
 class Linear(Activation):
     def forward(self, z: np.ndarray) -> np.ndarray:
         return z
@@ -83,10 +42,10 @@ class Linear(Activation):
 
 class ReLU(Activation):
     def forward(self, z: np.ndarray) -> np.ndarray:
-        # max(0, z) via boolean mask
-        return z * (z > 0)
+        return np.maximum(0.0, z)
 
     def derivative(self, z: np.ndarray) -> np.ndarray:
+        # 1 if z > 0, else 0 (element-wise)
         return 1.0 * (z > 0)
 
     def name(self) -> str:
@@ -95,17 +54,7 @@ class ReLU(Activation):
 
 class Sigmoid(Activation):
     def forward(self, z: np.ndarray) -> np.ndarray:
-        # σ(z) = 1 / (1 + e^(-z)), numerically stable per-element
-        out = np.empty_like(z, dtype=np.float64)
-        for i in range(z.size):
-            v = float(z.flat[i])
-            if v >= 0:
-                e = math.exp(-min(v, 500.0))
-                out.flat[i] = 1.0 / (1.0 + e)
-            else:
-                e = math.exp(max(v, -500.0))
-                out.flat[i] = e / (1.0 + e)
-        return out
+        return 1 / (1 + math.exp(-z))
 
     def derivative(self, z: np.ndarray) -> np.ndarray:
         # σ'(z) = σ(z) · (1 − σ(z))
@@ -119,14 +68,13 @@ class Sigmoid(Activation):
 class Tanh(Activation):
     def forward(self, z: np.ndarray) -> np.ndarray:
         # tanh(z) = (e^z − e^(−z)) / (e^z + e^(−z))
-        e_pos = _exp(z)
-        e_neg = _exp(-z)
+        e_pos = math.exp(z)
+        e_neg = math.exp(-z)
         return (e_pos - e_neg) / (e_pos + e_neg)
 
     def derivative(self, z: np.ndarray) -> np.ndarray:
-        # tanh'(z) = 1 − tanh²(z)
-        t = self.forward(z)
-        return 1.0 - t * t
+        # 2 / (e^z + e^(−z))^2
+        return (2 / (math.exp(z) + math.exp(-z))) ** 2
 
     def name(self) -> str:
         return "tanh"
@@ -135,9 +83,15 @@ class Tanh(Activation):
 class Softmax(Activation):
     def forward(self, z: np.ndarray) -> np.ndarray:
         # softmax(z_i) = e^z_i / Σ_j e^z_j  (max-shifted for stability)
-        shifted = z - _max_last_axis(z)
-        exp_z = _exp(shifted)
-        return exp_z / _sum_last_axis(exp_z)
+        denominator = 0;
+        z_len = len(z)
+        for i in range(z_len):
+            denominator += math.exp(z[i])
+        
+        def softmax_i(i: int) -> float:
+            return math.exp(z[i]) / denominator
+
+        return np.array([softmax_i(i) for i in range(z_len)], dtype=z.dtype)
 
     def derivative(self, z: np.ndarray) -> np.ndarray:
         """Return the Jacobian diagonal (used only when softmax is NOT paired
@@ -156,13 +110,14 @@ class Softmax(Activation):
 # Bonus activations (2 extra — spec bonus 5%)
 # ──────────────────────────────────────────────
 
+
 class LeakyReLU(Activation):
     def __init__(self, alpha: float = 0.01):
         self.alpha = alpha
 
     def forward(self, z: np.ndarray) -> np.ndarray:
         # z if z > 0, else alpha·z
-        pos = (z > 0)
+        pos = z > 0
         return z * pos + self.alpha * z * (1 - pos)
 
     def derivative(self, z: np.ndarray) -> np.ndarray:
@@ -219,5 +174,7 @@ def get_activation(name: str) -> Activation:
     """Return an activation instance by name string."""
     key = name.lower().replace(" ", "_")
     if key not in _activations:
-        raise ValueError(f"Unknown activation '{name}'. Available: {list(_activations.keys())}")
+        raise ValueError(
+            f"Unknown activation '{name}'. Available: {list(_activations.keys())}"
+        )
     return _activations[key]()
