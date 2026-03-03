@@ -8,20 +8,42 @@ class ActivationFunction:
         return x
 
     @staticmethod
+    def derivative_linear(x: float) -> float:
+        return 1
+
+    @staticmethod
     def reLU(x: float) -> float:
         return max(0, x)
+
+    @staticmethod
+    def derivative_reLU(x: float) -> float:
+        return 1 if x > 0 else 0
 
     @staticmethod
     def sigmoid(x: float) -> float:
         return 1 / (1 + math.exp(-x))
 
     @staticmethod
+    def derivative_sigmoid(x: float) -> float:
+        s = ActivationFunction.sigmoid(x)
+        return s * (1 - s)
+
+    @staticmethod
     def tanh(x: float) -> float:
         return (math.exp(x) - math.exp(-x)) / (math.exp(x) + math.exp(-x))
 
     @staticmethod
+    def derivative_tanh(x: float) -> float:
+        denominator = (math.exp(x) - math.exp(-x))**2
+        return 4 / denominator
+
+    @staticmethod
     def hyperbolic_tangent(x: float) -> float:
         return math.tanh(x)
+
+    @staticmethod
+    def derivative_hyperbolic_tangent(x: float) -> float:
+        return ActivationFunction.derivative_tanh(x)
 
     @staticmethod
     def softmax(x: List[float]) -> List[float]:
@@ -30,3 +52,8 @@ class ActivationFunction:
 
         denominator = sum(math.exp(x_i) for x_i in x)
         return [softmax_i(x_i, denominator) for x_i in x]
+
+    @staticmethod
+    def derivative_softmax(x: List[float]) -> List[float]:
+        # TODO: Implement the derivative of the softmax function
+        pass
