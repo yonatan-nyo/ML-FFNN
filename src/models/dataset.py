@@ -1,8 +1,11 @@
+from pathlib import Path
 import pandas as pd
 
+base_dir = Path(__file__).resolve().parent
 
 class Dataset:
-    def __init__(self, filename):
+    def __init__(self, filename = base_dir / '../data/datasetml_2026.csv'):
+        # file is on ../dataset/datasetml_2026.csv
         self.filename = filename
         self.data = self._read_dataset()
 
