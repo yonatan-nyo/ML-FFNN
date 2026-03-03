@@ -20,6 +20,14 @@ class LossFunction:
         return ret
 
     @staticmethod
+    def derivative_MSE(y_true: List[float], y_pred: List[float]) -> List[float]:
+        y_list_length = len(y_true)
+        if (y_list_length != len(y_pred)):
+            raise ValueError("Length of y_true and y_pred must be the same.")
+        # TODO: Implement the derivative of the MSE function
+        pass
+
+    @staticmethod
     def binary_cross_entropy(y_true: List[float], y_pred: List[float]) -> float:
         y_list_length = len(y_true)
         if (y_list_length != len(y_pred)):
@@ -30,6 +38,16 @@ class LossFunction:
             ret += -(1/y_list_length)*(y_true[i] * math.log(y_pred[i]) +
                                        (1 - y_true[i]) * math.log(1 - y_pred[i]))
         return ret
+
+    @staticmethod
+    def derivative_binary_cross_entropy(y_true: List[float], y_pred: List[float
+                                                                          ]) -> List[float]:
+        y_list_length = len(y_true)
+        if (y_list_length != len(y_pred)):
+            raise ValueError("Length of y_true and y_pred must be the same.")
+
+        # TODO: Implement the derivative of the binary cross-entropy function
+        pass
 
     @staticmethod
     def categorical_cross_entropy(y_true: List[List[float]], y_pred: List[List[float]]) -> float:
@@ -47,3 +65,12 @@ class LossFunction:
             for j in range(category_count):
                 ret += -(1/y_list_length)*y_true[i][j] * math.log(y_pred[i][j])
         return ret
+
+    @staticmethod
+    def derivative_categorical_cross_entropy(y_true: List[List[float]], y_pred: List[List[float]]) -> List[List[float]]:
+        y_list_length = len(y_true)
+        if (y_list_length != len(y_pred)):
+            raise ValueError("Length of y_true and y_pred must be the same.")
+
+        # TODO: Implement the derivative of the categorical cross-entropy function
+        pass
