@@ -1,6 +1,7 @@
 """Weight initialisation strategies."""
 
 from abc import ABC, abstractmethod
+from typing import Literal
 import numpy as np
 
 
@@ -102,8 +103,8 @@ _initializers: dict[str, type[Initializer]] = {
 }
 
 
-def get_initializer(name: str, **kwargs) -> Initializer:
-    key = name.lower().replace(" ", "_")
-    if key not in _initializers:
-        raise ValueError(f"Unknown initializer '{name}'. Available: {list(_initializers.keys())}")
-    return _initializers[key](**kwargs)
+InitializerName = Literal["zero", "uniform", "normal", "xavier", "he"]
+
+
+def get_initializer(name: InitializerName, **kwargs) -> Initializer:
+    return _initializers[name](**kwargs)

@@ -1,6 +1,7 @@
 """Activation functions"""
 
 from abc import ABC, abstractmethod
+from typing import Literal
 import math
 import numpy as np
 
@@ -170,11 +171,9 @@ _activations: dict[str, type[Activation]] = {
 }
 
 
-def get_activation(name: str) -> Activation:
+ActivationName = Literal["linear", "relu", "sigmoid", "tanh", "softmax", "leaky_relu", "swish"]
+
+
+def get_activation(name: ActivationName) -> Activation:
     """Return an activation instance by name string."""
-    key = name.lower().replace(" ", "_")
-    if key not in _activations:
-        raise ValueError(
-            f"Unknown activation '{name}'. Available: {list(_activations.keys())}"
-        )
-    return _activations[key]()
+    return _activations[name]()

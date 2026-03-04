@@ -1,6 +1,7 @@
 """Loss functions implemented with NumPy for batch operations."""
 
 from abc import ABC, abstractmethod
+from typing import Literal
 import numpy as np
 
 
@@ -83,8 +84,8 @@ _losses: dict[str, type[Loss]] = {
 }
 
 
-def get_loss(name: str) -> Loss:
-    key = name.lower().replace(" ", "_")
-    if key not in _losses:
-        raise ValueError(f"Unknown loss '{name}'. Available: {list(_losses.keys())}")
-    return _losses[key]()
+LossName = Literal["mse", "binary_cross_entropy", "categorical_cross_entropy"]
+
+
+def get_loss(name: LossName) -> Loss:
+    return _losses[name]()
