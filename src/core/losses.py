@@ -79,12 +79,12 @@ class CategoricalCrossEntropy(Loss):
 # Helper to look up by name
 _losses: dict[str, type[Loss]] = {
     "mse": MSE,
-    "binary_cross_entropy": BinaryCrossEntropy,
-    "categorical_cross_entropy": CategoricalCrossEntropy,
+    "bce": BinaryCrossEntropy,
+    "cce": CategoricalCrossEntropy,
 }
 
 
-LossName = Literal["mse", "binary_cross_entropy", "categorical_cross_entropy"]
+LossName = Literal["mse", "bce", "cce"]
 
 
 def get_loss(name: LossName) -> Loss:

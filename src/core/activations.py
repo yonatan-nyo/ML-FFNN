@@ -55,7 +55,7 @@ class ReLU(Activation):
 
 class Sigmoid(Activation):
     def forward(self, z: np.ndarray) -> np.ndarray:
-        return 1 / (1 + math.exp(-z))
+        return 1.0 / (1.0 + np.exp(-z))
 
     def derivative(self, z: np.ndarray) -> np.ndarray:
         # σ'(z) = σ(z) · (1 − σ(z))
@@ -68,14 +68,10 @@ class Sigmoid(Activation):
 
 class Tanh(Activation):
     def forward(self, z: np.ndarray) -> np.ndarray:
-        # tanh(z) = (e^z − e^(−z)) / (e^z + e^(−z))
-        e_pos = math.exp(z)
-        e_neg = math.exp(-z)
-        return (e_pos - e_neg) / (e_pos + e_neg)
+        return np.tanh(z)
 
     def derivative(self, z: np.ndarray) -> np.ndarray:
-        # 2 / (e^z + e^(−z))^2
-        return (2 / (math.exp(z) + math.exp(-z))) ** 2
+        return 1.0 - np.tanh(z) ** 2
 
     def name(self) -> str:
         return "tanh"
@@ -83,16 +79,10 @@ class Tanh(Activation):
 
 class Softmax(Activation):
     def forward(self, z: np.ndarray) -> np.ndarray:
-        # softmax(z_i) = e^z_i / Σ_j e^z_j  (max-shifted for stability)
-        denominator = 0;
-        z_len = len(z)
-        for i in range(z_len):
-            denominator += math.exp(z[i])
-        
-        def softmax_i(i: int) -> float:
-            return math.exp(z[i]) / denominator
-
-        return np.array([softmax_i(i) for i in range(z_len)], dtype=z.dtype)
+        # softmax with max-shift for numerical stability; supports batches
+        z_shifted = z - np.max(z, axis=-1, keepdims=True)
+        exp_z = np.exp(z_shifted)
+        return exp_z / np.sum(exp_z, axis=-1, keepdims=True)
 
     def derivative(self, z: np.ndarray) -> np.ndarray:
         """Return the Jacobian diagonal (used only when softmax is NOT paired
