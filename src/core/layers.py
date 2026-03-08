@@ -24,6 +24,7 @@ class Dense:
         output_dim: int,
         activation: Activation | str = "linear",
         initializer: Initializer | str | None = None,
+        seed: int | None = None,
     ):
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -35,9 +36,9 @@ class Dense:
 
         # Resolve initializer (default: Xavier)
         if initializer is None:
-            initializer = XavierInitializer(seed=None)
+            initializer = XavierInitializer(seed=seed)
         elif isinstance(initializer, str):
-            initializer = get_initializer(initializer)
+            initializer = get_initializer(initializer, seed=seed)
         self.initializer: Initializer = initializer
 
         # Weights: shape (input_dim, output_dim)

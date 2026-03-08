@@ -48,6 +48,7 @@ class NeuralNetwork:
         initializer: Initializer | str | None = None,
         regularization: str | None = None,
         reg_lambda: float = 0.0,
+        seed: int | None = None,
     ):
         assert len(activations) == len(layer_sizes) - 1, (
             "Need exactly len(layer_sizes)-1 activation functions."
@@ -62,16 +63,23 @@ class NeuralNetwork:
         self.regularization = regularization  # None / 'l1' / 'l2'
         self.reg_lambda = reg_lambda
 
+        # Reproducibility: create a root RNG from the seed, then derive
+        # if this isnt initialized ipynb result bakal beda2 tiap run
+        self._root_rng = np.random.default_rng(seed)
+
         # Build layers
         self.layers: list[Dense] = []
         for i in range(len(layer_sizes) - 1):
             act = activations[i]
+            # Derive a deterministic child seed for this layer
+            layer_seed = int(self._root_rng.integers(0, 2**31)) if seed is not None else None
             self.layers.append(
                 Dense(
                     input_dim=layer_sizes[i],
                     output_dim=layer_sizes[i + 1],
                     activation=act,
                     initializer=initializer,
+                    seed=layer_seed,
                 )
             )
 
@@ -177,8 +185,8 @@ class NeuralNetwork:
         history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
 
         for epoch in range(1, epochs + 1):
-            # Shuffle
-            indices = np.random.permutation(n_samples)
+            # Shuffle (using the network's own RNG for reproducibility)
+            indices = self._root_rng.permutation(n_samples)
             X_shuffled = X_train[indices]
             y_shuffled = y_train[indices]
 
