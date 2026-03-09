@@ -2,7 +2,6 @@
 
 from abc import ABC, abstractmethod
 from typing import Literal
-import math
 import numpy as np
 
 class Activation(ABC):
@@ -46,8 +45,7 @@ class ReLU(Activation):
         return np.maximum(0.0, z)
 
     def derivative(self, z: np.ndarray) -> np.ndarray:
-        # 1 if z > 0, else 0 (element-wise)
-        return 1.0 * (z > 0)
+        return np.where(z > 0, 1.0, 0.0)
 
     def name(self) -> str:
         return "relu"
@@ -103,50 +101,41 @@ class Softmax(Activation):
 
 
 class LeakyReLU(Activation):
+    """https://www.geeksforgeeks.org/machine-learning/leaky-relu-activation-function-in-deep-learning/"""
+
     def __init__(self, alpha: float = 0.01):
         self.alpha = alpha
 
     def forward(self, z: np.ndarray) -> np.ndarray:
-        # z if z > 0, else alpha·z
-        pos = z > 0
-        return z * pos + self.alpha * z * (1 - pos)
+        return np.where(z > 0, z, self.alpha * z)
 
     def derivative(self, z: np.ndarray) -> np.ndarray:
-        # 1 if z > 0, else alpha
-        pos = 1.0 * (z > 0)
-        return pos + self.alpha * (1.0 - pos)
+        return np.where(z > 0, 1.0, self.alpha)
 
     def name(self) -> str:
         return f"leaky_relu(alpha={self.alpha})"
 
 
 class Swish(Activation):
-    """Swish / SiLU activation: z · σ(z)"""
+    """https://www.geeksforgeeks.org/deep-learning/swish-activation-function/"""
+
+    def __init__(self, beta: float = 1.0):
+        self.beta = beta
 
     def _sigmoid(self, z: np.ndarray) -> np.ndarray:
-        """Sigmoid helper (from-scratch)."""
-        out = np.empty_like(z, dtype=np.float64)
-        for i in range(z.size):
-            v = float(z.flat[i])
-            if v >= 0:
-                e = math.exp(-min(v, 500.0))
-                out.flat[i] = 1.0 / (1.0 + e)
-            else:
-                e = math.exp(max(v, -500.0))
-                out.flat[i] = e / (1.0 + e)
-        return out
+        return 1.0 / (1.0 + np.exp(-z))
 
     def forward(self, z: np.ndarray) -> np.ndarray:
-        # swish(z) = z · σ(z)
-        return z * self._sigmoid(z)
+        # swish(z) = x * sigmoid(βx)
+        return z * self._sigmoid(self.beta * z)
 
     def derivative(self, z: np.ndarray) -> np.ndarray:
-        # swish'(z) = σ(z) + z · σ(z) · (1 − σ(z))
-        sig = self._sigmoid(z)
-        return sig + z * sig * (1.0 - sig)
+        # swish'(z) = σ(β·z) + β·z·σ(β·z)·(1 − σ(β·z))
+        sig = self._sigmoid(self.beta * z)
+        return sig + self.beta * z * sig * (1.0 - sig)
 
     def name(self) -> str:
-        return "swish"
+        return f"swish(beta={self.beta})"
 
 
 # Helper to look up by name string
