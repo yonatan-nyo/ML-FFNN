@@ -9,8 +9,8 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
-from .activations import Activation, Softmax, get_activation
-from .initializers import Initializer, get_initializer
+from .activations import Activation, Softmax
+from .initializers import Initializer
 from .layers import Dense
 from .losses import (
     CategoricalCrossEntropy,
@@ -113,8 +113,8 @@ class NeuralNetwork:
             batch_size = y_true.shape[0]
             d_z = (y_pred - y_true) / batch_size  # (batch, C)
             # Manually set gradients for the last layer
-            last_layer.grad_weights = last_layer._input.T @ d_z / batch_size
-            last_layer.grad_bias = np.mean(d_z, axis=0, keepdims=True)
+            last_layer.grad_weights = last_layer._input.T @ d_z
+            last_layer.grad_bias = np.sum(d_z, axis=0, keepdims=True)
             d_out = d_z @ last_layer.weights.T
             # Propagate through remaining layers
             for layer in reversed(self.layers[:-1]):
@@ -326,3 +326,4 @@ class NeuralNetwork:
 
     def __repr__(self) -> str:
         return self.summary()
+

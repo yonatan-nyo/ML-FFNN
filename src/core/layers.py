@@ -3,7 +3,7 @@
 from __future__ import annotations
 import numpy as np
 
-from .activations import Activation, Linear, get_activation
+from .activations import Activation, get_activation
 from .initializers import Initializer, XavierInitializer, get_initializer
 
 
@@ -74,12 +74,12 @@ class Dense:
         # dL/dz = dL/da * da/dz (element-wise for non-softmax)
         d_z = d_out * self.activation.derivative(self._z)  # (batch, output_dim)
 
-        batch_size = d_out.shape[0]
-
-        # dL/dW = X^T @ d_z  (averaged over batch)
-        self.grad_weights = self._input.T @ d_z / batch_size
-        # dL/db = mean of d_z over batch
-        self.grad_bias = np.mean(d_z, axis=0, keepdims=True)
+        # d_out already carries the 1/N factor from loss.backward(), so we sum
+        # (not mean) here to match the autograd engine which also accumulates a sum.
+        # dL/dW = X^T @ d_z
+        self.grad_weights = self._input.T @ d_z
+        # dL/db = sum of d_z over batch (d_out already has the 1/N from the loss)
+        self.grad_bias = np.sum(d_z, axis=0, keepdims=True)
         # dL/d(input) = d_z @ W^T
         d_input = d_z @ self.weights.T
         return d_input

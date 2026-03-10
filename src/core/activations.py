@@ -1,8 +1,12 @@
 """Activation functions"""
 
+from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Literal
 import numpy as np
+
+from .autograd import Tensor
+
 
 class Activation(ABC):
     """Base class for activation functions."""
@@ -18,6 +22,11 @@ class Activation(ABC):
 
     @abstractmethod
     def name(self) -> str:
+        pass
+
+    @abstractmethod
+    def forward_tensor(self, z: "Tensor") -> "Tensor":
+        """Forward pass via Tensor ops (used by autograd)."""
         pass
 
     def __repr__(self) -> str:
@@ -39,6 +48,9 @@ class Linear(Activation):
     def name(self) -> str:
         return "linear"
 
+    def forward_tensor(self, z: "Tensor") -> "Tensor":
+        return z  # identity — gradient is 1
+
 
 class ReLU(Activation):
     def forward(self, z: np.ndarray) -> np.ndarray:
@@ -49,6 +61,9 @@ class ReLU(Activation):
 
     def name(self) -> str:
         return "relu"
+
+    def forward_tensor(self, z: "Tensor") -> "Tensor":
+        return z.relu()
 
 
 class Sigmoid(Activation):
@@ -63,6 +78,9 @@ class Sigmoid(Activation):
     def name(self) -> str:
         return "sigmoid"
 
+    def forward_tensor(self, z: "Tensor") -> "Tensor":
+        return z.sigmoid()
+
 
 class Tanh(Activation):
     def forward(self, z: np.ndarray) -> np.ndarray:
@@ -73,6 +91,9 @@ class Tanh(Activation):
 
     def name(self) -> str:
         return "tanh"
+
+    def forward_tensor(self, z: "Tensor") -> "Tensor":
+        return z.tanh()
 
 
 class Softmax(Activation):
@@ -94,6 +115,9 @@ class Softmax(Activation):
     def name(self) -> str:
         return "softmax"
 
+    def forward_tensor(self, z: "Tensor") -> "Tensor":
+        return z.softmax()
+
 
 # ──────────────────────────────────────────────
 # Bonus activations (2 extra — spec bonus 5%)
@@ -114,6 +138,9 @@ class LeakyReLU(Activation):
 
     def name(self) -> str:
         return f"leaky_relu(alpha={self.alpha})"
+
+    def forward_tensor(self, z: "Tensor") -> "Tensor":
+        return z.leaky_relu(self.alpha)
 
 
 class Swish(Activation):
@@ -137,8 +164,8 @@ class Swish(Activation):
     def name(self) -> str:
         return f"swish(beta={self.beta})"
 
-
-# Helper to look up by name string
+    def forward_tensor(self, z: "Tensor") -> "Tensor":
+        return z.swish(self.beta)
 _activations: dict[str, type[Activation]] = {
     "linear": Linear,
     "relu": ReLU,

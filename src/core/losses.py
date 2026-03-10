@@ -1,8 +1,11 @@
 """Loss functions implemented with NumPy for batch operations."""
 
+from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Literal
 import numpy as np
+
+from .autograd import Tensor
 
 
 class Loss(ABC):
@@ -16,6 +19,11 @@ class Loss(ABC):
     @abstractmethod
     def backward(self, y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
         """Return dL/d(y_pred) with the same shape as y_pred."""
+        ...
+
+    @abstractmethod
+    def forward_tensor(self, y_true: Tensor, y_pred: Tensor) -> Tensor:
+        """Compute loss via Tensor ops so autograd can back-propagate through it."""
         ...
 
     @abstractmethod
@@ -36,6 +44,10 @@ class MSE(Loss):
         n = y_true.shape[0]
         return 2.0 * (y_pred - y_true) / n
 
+    def forward_tensor(self, y_true: Tensor, y_pred: Tensor) -> Tensor:
+        diff = y_pred - y_true
+        return (diff * diff).mean()
+
     def name(self) -> str:
         return "mse"
 
@@ -54,6 +66,10 @@ class BinaryCrossEntropy(Loss):
         n = y_true.shape[0]
         return (-(y_true / p) + (1.0 - y_true) / (1.0 - p)) / n
 
+    def forward_tensor(self, y_true: Tensor, y_pred: Tensor) -> Tensor:
+        p = y_pred.clip(self._eps, 1.0 - self._eps)
+        return -(y_true * p.log() + (1.0 - y_true) * (1.0 - p).log()).mean()
+
     def name(self) -> str:
         return "binary_cross_entropy"
 
@@ -71,6 +87,10 @@ class CategoricalCrossEntropy(Loss):
         p = np.clip(y_pred, self._eps, 1.0)
         n = y_true.shape[0]
         return -(y_true / p) / n
+
+    def forward_tensor(self, y_true: Tensor, y_pred: Tensor) -> Tensor:
+        p = y_pred.clip(self._eps, 1.0)
+        return -(y_true * p.log()).sum(axis=-1).mean()
 
     def name(self) -> str:
         return "categorical_cross_entropy"
