@@ -21,6 +21,9 @@ class Initializer(ABC):
 class ZeroInitializer(Initializer):
     """All weights set to zero."""
 
+    def __init__(self, seed: int | None = None):
+        pass 
+
     def __call__(self, shape: tuple[int, ...]) -> np.ndarray:
         return np.zeros(shape)
 
