@@ -19,7 +19,13 @@ class Initializer(ABC):
 
 
 class ZeroInitializer(Initializer):
-    """All weights set to zero."""
+    """Semua bobot di-set ke 0.
+
+    tidak cocok untuk training hidden layer
+    karena symmetry problem (semua neuron belajar hal yang sama).
+    
+    https://www.deeplearning.ai/ai-notes/initialization/index.html
+    """
 
     def __init__(self, seed: int | None = None):
         pass 
@@ -32,7 +38,12 @@ class ZeroInitializer(Initializer):
 
 
 class UniformInitializer(Initializer):
-    """Random uniform in [low, high)."""
+    """Bobot acak uniform di rentang [low, high).
+
+    skala perlu dituning manual.
+    
+    https://numpy.org/doc/stable/reference/random/generated/numpy.random.Generator.uniform.html
+    """
 
     def __init__(self, low: float = -1.0, high: float = 1.0, seed: int | None = None):
         self.low = low
@@ -47,7 +58,12 @@ class UniformInitializer(Initializer):
 
 
 class NormalInitializer(Initializer):
-    """Random normal with given mean and variance."""
+    """Bobot acak normal dengan mean dan variance tertentu.
+
+    variance harus dituning hati-hati.
+    
+    https://numpy.org/doc/stable/reference/random/generated/numpy.random.Generator.normal.html
+    """
 
     def __init__(self, mean: float = 0.0, variance: float = 1.0, seed: int | None = None):
         self.mean = mean
@@ -67,7 +83,12 @@ class NormalInitializer(Initializer):
 # ──────────────────────────────────────────────
 
 class XavierInitializer(Initializer):
-    """Xavier / Glorot initialisation: U(-sqrt(6/(fan_in+fan_out)), sqrt(6/(fan_in+fan_out)))"""
+    """Xavier / Glorot: U(-sqrt(6/(fan_in + fan_out)), sqrt(6/(fan_in + fan_out))).
+
+    Umumnya cocok untuk tanh/sigmoid (dan layer linear).
+    
+    https://www.geeksforgeeks.org/deep-learning/xavier-initialization/
+    """
 
     def __init__(self, seed: int | None = None):
         self.rng = np.random.default_rng(seed)
@@ -82,7 +103,12 @@ class XavierInitializer(Initializer):
 
 
 class HeInitializer(Initializer):
-    """He initialisation: N(0, 2/fan_in)"""
+    """He / Kaiming: N(0, 2/fan_in).
+
+    Umumnya cocok untuk relu, leaky_relu, dan sering bagus untuk swish.
+    
+    https://www.geeksforgeeks.org/deep-learning/kaiming-initialization-in-deep-learning/
+    """
 
     def __init__(self, seed: int | None = None):
         self.rng = np.random.default_rng(seed)
