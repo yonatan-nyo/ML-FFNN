@@ -1,4 +1,4 @@
-"""Dense (fully-connected) layer."""
+"""Neural network layers (Dense, RMSNorm, etc.)."""
 
 from __future__ import annotations
 import numpy as np
@@ -109,3 +109,84 @@ class Dense:
             f"Dense(in={self.input_dim}, out={self.output_dim}, "
             f"act={self.activation.name()}, params={self.num_params()})"
         )
+
+
+class RMSNorm:
+    """Root Mean Square Normalization (RMSNorm) Layer.
+    https://docs.pytorch.org/docs/stable/generated/torch.nn.RMSNorm.html
+    
+    Parameters
+    ----------
+    input_dim : int
+        Number of features to normalize.
+    eps : float
+        A small constant for numerical stability. Default is 1e-8.
+    """
+
+    def __init__(self, input_dim: int, eps: float = 1e-8):
+        self.input_dim = input_dim
+        self.eps = eps
+        
+        # Learnable scale parameter (gamma)
+        self.gamma: np.ndarray = np.ones((1, input_dim))
+        self.grad_gamma: np.ndarray = np.zeros_like(self.gamma)
+        
+        # We don't use bias in standard RMSNorm as per the paper, only scale.
+        
+        # Caches for backward pass
+        self._input: np.ndarray | None = None
+        self._rms: np.ndarray | None = None
+        self._normalized: np.ndarray | None = None
+        
+    def forward(self, X: np.ndarray) -> np.ndarray:
+        """Forward pass for RMSNorm. X shape: (batch, input_dim)"""
+        self._input = X
+        
+        # Calculate RMS for each sample in the batch
+        # RMS = sqrt( 1/d * sum(X^2) + eps )
+        self._rms = np.sqrt(np.mean(X**2, axis=-1, keepdims=True) + self.eps)
+        
+        # Normalize
+        self._normalized = X / self._rms
+        
+        # Scale
+        out = self._normalized * self.gamma
+        return out
+        
+    def backward(self, d_out: np.ndarray) -> np.ndarray:
+        """Backward pass for RMSNorm. 
+        d_out shape: (batch, input_dim)
+        """
+        # Gradient w.r.t gamma
+        self.grad_gamma = np.sum(d_out * self._normalized, axis=0, keepdims=True)
+        
+        # Gradient w.r.t normalized input
+        d_norm = d_out * self.gamma
+        
+        # Gradient w.r.t input X (vectorized derivation)
+        # d_norm_dX = 1/RMS - X / (RMS^3 * D) * X
+        # dL/dX = dL/d_norm * d_norm/dX
+        term1 = d_norm / self._rms
+        term2 = (self._normalized / self._rms) * np.mean(d_norm * self._normalized, axis=-1, keepdims=True)
+        
+        d_input = term1 - term2
+        return d_input
+
+    def num_params(self) -> int:
+        return self.gamma.size
+
+    def to_dict(self) -> dict:
+        return {
+            "input_dim": self.input_dim,
+            "eps": self.eps,
+            "gamma": self.gamma.tolist(),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "RMSNorm":
+        layer = cls(d["input_dim"], eps=d["eps"])
+        layer.gamma = np.array(d["gamma"])
+        return layer
+
+    def __repr__(self) -> str:
+        return f"RMSNorm(in={self.input_dim}, eps={self.eps}, params={self.num_params()})"

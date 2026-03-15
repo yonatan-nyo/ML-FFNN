@@ -11,7 +11,7 @@ import numpy as np
 
 from .activations import Activation, Softmax
 from .initializers import Initializer
-from .layers import Dense
+from .layers import Dense, RMSNorm
 from .losses import (
     CategoricalCrossEntropy,
     Loss,
@@ -54,6 +54,7 @@ class NeuralNetwork:
         reg_lambda: float = 0.0,
         l1_lambda: float | None = None,
         l2_lambda: float | None = None,
+        use_rmsnorm: bool = False,
         seed: int | None = None,
     ):
         assert len(activations) == len(layer_sizes) - 1, (
@@ -64,6 +65,8 @@ class NeuralNetwork:
         if isinstance(loss, str):
             loss = get_loss(loss)
         self.loss_fn: Loss = loss
+
+        self.use_rmsnorm = use_rmsnorm
 
         # Regularisation (supports legacy regularization/reg_lambda and
         # explicit l1_lambda/l2_lambda simultaneously).
@@ -80,7 +83,7 @@ class NeuralNetwork:
         self._root_rng = np.random.default_rng(seed)
 
         # Build layers
-        self.layers: list[Dense] = []
+        self.layers: list[Dense | RMSNorm] = []
         for i in range(len(layer_sizes) - 1):
             act = activations[i]
             # Derive a deterministic child seed for this layer
@@ -94,6 +97,9 @@ class NeuralNetwork:
                     seed=layer_seed,
                 )
             )
+            # Add RMSNorm after Dense layer except for the output layer (or adjust accordingly)
+            if self.use_rmsnorm and i < len(layer_sizes) - 2:
+                self.layers.append(RMSNorm(input_dim=layer_sizes[i + 1]))
 
         self._layer_sizes = layer_sizes
         self._adam_m_w: list[np.ndarray] | None = None
@@ -182,20 +188,24 @@ class NeuralNetwork:
         # Add regularisation gradients
         if self.l1_lambda > 0 or self.l2_lambda > 0:
             for layer in self.layers:
-                if self.l1_lambda > 0:
-                    layer.grad_weights += self.l1_lambda * np.sign(layer.weights)
-                if self.l2_lambda > 0:
-                    layer.grad_weights += self.l2_lambda * layer.weights
+                if isinstance(layer, Dense):
+                    if self.l1_lambda > 0:
+                        layer.grad_weights += self.l1_lambda * np.sign(layer.weights)
+                    if self.l2_lambda > 0:
+                        layer.grad_weights += self.l2_lambda * layer.weights
 
     # ──────────────────────────────────────────────
     # Weight update (gradient descent)
     # ──────────────────────────────────────────────
     def _reset_optimizer_state(self) -> None:
-        self._adam_m_w = [np.zeros_like(layer.weights) for layer in self.layers]
-        self._adam_v_w = [np.zeros_like(layer.weights) for layer in self.layers]
-        self._adam_m_b = [np.zeros_like(layer.bias) for layer in self.layers]
-        self._adam_v_b = [np.zeros_like(layer.bias) for layer in self.layers]
+        self._adam_m_w = [np.zeros_like(layer.weights) if isinstance(layer, Dense) else None for layer in self.layers]
+        self._adam_v_w = [np.zeros_like(layer.weights) if isinstance(layer, Dense) else None for layer in self.layers]
+        self._adam_m_b = [np.zeros_like(layer.bias) if isinstance(layer, Dense) else None for layer in self.layers]
+        self._adam_v_b = [np.zeros_like(layer.bias) if isinstance(layer, Dense) else None for layer in self.layers]
         self._adam_t = 0
+        
+        self._adam_m_gamma = [np.zeros_like(layer.gamma) if isinstance(layer, RMSNorm) else None for layer in self.layers]
+        self._adam_v_gamma = [np.zeros_like(layer.gamma) if isinstance(layer, RMSNorm) else None for layer in self.layers]
 
     def _update_weights(
         self,
@@ -207,8 +217,11 @@ class NeuralNetwork:
     ) -> None:
         if optimizer == "sgd":
             for layer in self.layers:
-                layer.weights -= lr * layer.grad_weights
-                layer.bias -= lr * layer.grad_bias
+                if isinstance(layer, Dense):
+                    layer.weights -= lr * layer.grad_weights
+                    layer.bias -= lr * layer.grad_bias
+                elif isinstance(layer, RMSNorm):
+                    layer.gamma -= lr * layer.grad_gamma
             return
 
         if optimizer != "adam":
@@ -226,18 +239,28 @@ class NeuralNetwork:
         # https://www.geeksforgeeks.org/deep-learning/adam-optimizer/
         self._adam_t += 1
         for i, layer in enumerate(self.layers):
-            self._adam_m_w[i] = beta1 * self._adam_m_w[i] + (1.0 - beta1) * layer.grad_weights
-            self._adam_v_w[i] = beta2 * self._adam_v_w[i] + (1.0 - beta2) * (layer.grad_weights ** 2)
-            self._adam_m_b[i] = beta1 * self._adam_m_b[i] + (1.0 - beta1) * layer.grad_bias
-            self._adam_v_b[i] = beta2 * self._adam_v_b[i] + (1.0 - beta2) * (layer.grad_bias ** 2)
+            if isinstance(layer, Dense):
+                self._adam_m_w[i] = beta1 * self._adam_m_w[i] + (1.0 - beta1) * layer.grad_weights
+                self._adam_v_w[i] = beta2 * self._adam_v_w[i] + (1.0 - beta2) * (layer.grad_weights ** 2)
+                self._adam_m_b[i] = beta1 * self._adam_m_b[i] + (1.0 - beta1) * layer.grad_bias
+                self._adam_v_b[i] = beta2 * self._adam_v_b[i] + (1.0 - beta2) * (layer.grad_bias ** 2)
 
-            m_hat_w = self._adam_m_w[i] / (1.0 - beta1 ** self._adam_t)
-            v_hat_w = self._adam_v_w[i] / (1.0 - beta2 ** self._adam_t)
-            m_hat_b = self._adam_m_b[i] / (1.0 - beta1 ** self._adam_t)
-            v_hat_b = self._adam_v_b[i] / (1.0 - beta2 ** self._adam_t)
+                m_hat_w = self._adam_m_w[i] / (1.0 - beta1 ** self._adam_t)
+                v_hat_w = self._adam_v_w[i] / (1.0 - beta2 ** self._adam_t)
+                m_hat_b = self._adam_m_b[i] / (1.0 - beta1 ** self._adam_t)
+                v_hat_b = self._adam_v_b[i] / (1.0 - beta2 ** self._adam_t)
 
-            layer.weights -= lr * m_hat_w / (np.sqrt(v_hat_w) + epsilon)
-            layer.bias -= lr * m_hat_b / (np.sqrt(v_hat_b) + epsilon)
+                layer.weights -= lr * m_hat_w / (np.sqrt(v_hat_w) + epsilon)
+                layer.bias -= lr * m_hat_b / (np.sqrt(v_hat_b) + epsilon)
+            
+            elif isinstance(layer, RMSNorm):
+                self._adam_m_gamma[i] = beta1 * self._adam_m_gamma[i] + (1.0 - beta1) * layer.grad_gamma
+                self._adam_v_gamma[i] = beta2 * self._adam_v_gamma[i] + (1.0 - beta2) * (layer.grad_gamma ** 2)
+                
+                m_hat_gamma = self._adam_m_gamma[i] / (1.0 - beta1 ** self._adam_t)
+                v_hat_gamma = self._adam_v_gamma[i] / (1.0 - beta2 ** self._adam_t)
+                
+                layer.gamma -= lr * m_hat_gamma / (np.sqrt(v_hat_gamma) + epsilon)
 
     # ──────────────────────────────────────────────
     # Compute loss (with optional regularisation term)
@@ -247,10 +270,11 @@ class NeuralNetwork:
         if self.l1_lambda > 0 or self.l2_lambda > 0:
             reg_term = 0.0
             for layer in self.layers:
-                if self.l1_lambda > 0:
-                    reg_term += self.l1_lambda * np.sum(np.abs(layer.weights))
-                if self.l2_lambda > 0:
-                    reg_term += self.l2_lambda * np.sum(layer.weights ** 2)
+                if isinstance(layer, Dense):
+                    if self.l1_lambda > 0:
+                        reg_term += self.l1_lambda * np.sum(np.abs(layer.weights))
+                    if self.l2_lambda > 0:
+                        reg_term += self.l2_lambda * np.sum(layer.weights ** 2)
             base_loss += reg_term
         return base_loss
 
@@ -358,34 +382,58 @@ class NeuralNetwork:
     # ──────────────────────────────────────────────
     # Plotting
     # ──────────────────────────────────────────────
-    def plot_weight_distribution(self, layers: list[int] | None = None) -> None:
-        """Plot histogram of weights for selected layers."""
-        if layers is None:
-            layers = list(range(len(self.layers)))
-        fig, axes = plt.subplots(1, len(layers), figsize=(5 * len(layers), 4))
-        if len(layers) == 1:
+    def plot_weight_distribution(self) -> None:
+        """Plot histogram of weights (or gamma) for all layers."""
+        layers_to_plot = [i for i, l in enumerate(self.layers) if hasattr(l, "weights") or hasattr(l, "gamma")]
+        if not layers_to_plot:
+            return
+            
+        fig, axes = plt.subplots(1, len(layers_to_plot), figsize=(5 * len(layers_to_plot), 4))
+        if len(layers_to_plot) == 1:
             axes = [axes]
-        for ax, idx in zip(axes, layers):
-            w = self.layers[idx].weights.flatten()
+            
+        for ax, idx in zip(axes, layers_to_plot):
+            layer = self.layers[idx]
+            if isinstance(layer, Dense):
+                w = layer.weights.flatten()
+                title = f"Layer {idx} (Dense) Weights"
+            elif isinstance(layer, RMSNorm):
+                w = layer.gamma.flatten()
+                title = f"Layer {idx} (RMSNorm) Gamma"
+            else:
+                continue
+                
             ax.hist(w, bins=50, edgecolor="black", alpha=0.7)
-            ax.set_title(f"Layer {idx} weights")
-            ax.set_xlabel("Weight value")
+            ax.set_title(title)
+            ax.set_xlabel("Parameter Value")
             ax.set_ylabel("Count")
         plt.tight_layout()
         plt.show()
 
-    def plot_gradient_distribution(self, layers: list[int] | None = None) -> None:
-        """Plot histogram of weight gradients for selected layers."""
-        if layers is None:
-            layers = list(range(len(self.layers)))
-        fig, axes = plt.subplots(1, len(layers), figsize=(5 * len(layers), 4))
-        if len(layers) == 1:
+    def plot_gradient_distribution(self) -> None:
+        """Plot histogram of parameter gradients for all layers."""
+        layers_to_plot = [i for i, l in enumerate(self.layers) if hasattr(l, "grad_weights") or hasattr(l, "grad_gamma")]
+        if not layers_to_plot:
+            return
+            
+        fig, axes = plt.subplots(1, len(layers_to_plot), figsize=(5 * len(layers_to_plot), 4))
+        if len(layers_to_plot) == 1:
             axes = [axes]
-        for ax, idx in zip(axes, layers):
-            g = self.layers[idx].grad_weights.flatten()
+            
+        for ax, idx in zip(axes, layers_to_plot):
+            layer = self.layers[idx]
+            if isinstance(layer, Dense):
+                g = layer.grad_weights.flatten()
+                title = f"Layer {idx} (Dense) dWeights"
+            elif isinstance(layer, RMSNorm):
+                g = layer.grad_gamma.flatten()
+                title = f"Layer {idx} (RMSNorm) dGamma"
+            else:
+                continue
+                
             ax.hist(g, bins=50, edgecolor="black", alpha=0.7, color="orange")
-            ax.set_title(f"Layer {idx} weight gradients")
-            ax.set_xlabel("Gradient value")
+            ax.set_title(title)
+            ax.set_xlabel("Gradient Value")
             ax.set_ylabel("Count")
         plt.tight_layout()
         plt.show()
@@ -398,6 +446,7 @@ class NeuralNetwork:
         data: dict[str, Any] = {
             "layer_sizes": self._layer_sizes,
             "loss": self.loss_fn.name(),
+            "use_rmsnorm": self.use_rmsnorm,
             "regularization": self.regularization,
             "reg_lambda": self.reg_lambda,
             "l1_lambda": self.l1_lambda,
@@ -414,12 +463,13 @@ class NeuralNetwork:
             data = json.load(f)
 
         layer_dicts = data["layers"]
-        activations_list = [ld["activation"] for ld in layer_dicts]
+        activations_list = [ld["activation"] for ld in layer_dicts if "activation" in ld]
 
         model = cls(
             layer_sizes=data["layer_sizes"],
             activations=activations_list,
             loss=data["loss"],
+            use_rmsnorm=data.get("use_rmsnorm", False),
             regularization=data.get("regularization"),
             reg_lambda=data.get("reg_lambda", 0.0),
             l1_lambda=data.get("l1_lambda"),
@@ -427,8 +477,12 @@ class NeuralNetwork:
         )
         # Restore saved weights
         for layer, ld in zip(model.layers, layer_dicts):
-            layer.weights = np.array(ld["weights"])
-            layer.bias = np.array(ld["bias"])
+            if isinstance(layer, Dense):
+                layer.weights = np.array(ld["weights"])
+                layer.bias = np.array(ld["bias"])
+            elif isinstance(layer, RMSNorm):
+                layer.gamma = np.array(ld["gamma"])
+                layer.eps = ld.get("eps", 1e-8)
 
         return model
 
