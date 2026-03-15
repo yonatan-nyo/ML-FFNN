@@ -75,7 +75,7 @@ class BinaryCrossEntropy(Loss):
 
 
 class CategoricalCrossEntropy(Loss):
-    """Categorical Cross-Entropy: L = -(1/N) * sum_i sum_c y_ic * ln(p_ic)"""
+    """Categorical Cross-Entropy: L = -(1/N) * (sum_i (sum_c (y_ic * ln(p_ic))))"""
 
     _eps = 1e-12
 
