@@ -38,6 +38,10 @@ class NeuralNetwork:
         ``'l1'``, ``'l2'``, or ``None``.
     reg_lambda : float
         Regularisation strength.
+    l1_lambda : float | None
+        Optional explicit L1 coefficient. If provided, takes precedence.
+    l2_lambda : float | None
+        Optional explicit L2 coefficient. If provided, takes precedence.
     """
 
     def __init__(
@@ -48,6 +52,8 @@ class NeuralNetwork:
         initializer: Initializer | str | None = None,
         regularization: str | None = None,
         reg_lambda: float = 0.0,
+        l1_lambda: float | None = None,
+        l2_lambda: float | None = None,
         seed: int | None = None,
     ):
         assert len(activations) == len(layer_sizes) - 1, (
@@ -59,9 +65,15 @@ class NeuralNetwork:
             loss = get_loss(loss)
         self.loss_fn: Loss = loss
 
-        # Regularisation
-        self.regularization = regularization  # None / 'l1' / 'l2'
-        self.reg_lambda = reg_lambda
+        # Regularisation (supports legacy regularization/reg_lambda and
+        # explicit l1_lambda/l2_lambda simultaneously).
+        self.l1_lambda, self.l2_lambda = self._resolve_regularization(
+            regularization,
+            reg_lambda,
+            l1_lambda,
+            l2_lambda,
+        )
+        self._sync_regularization_aliases()
 
         # Reproducibility: create a root RNG from the seed, then derive
         # if this isnt initialized ipynb result bakal beda2 tiap run
@@ -84,6 +96,48 @@ class NeuralNetwork:
             )
 
         self._layer_sizes = layer_sizes
+        self._adam_m_w: list[np.ndarray] | None = None
+        self._adam_v_w: list[np.ndarray] | None = None
+        self._adam_m_b: list[np.ndarray] | None = None
+        self._adam_v_b: list[np.ndarray] | None = None
+        self._adam_t: int = 0
+
+    @staticmethod
+    def _resolve_regularization(
+        regularization: str | None,
+        reg_lambda: float,
+        l1_lambda: float | None,
+        l2_lambda: float | None,
+    ) -> tuple[float, float]:
+        l1 = 0.0 if l1_lambda is None else float(l1_lambda)
+        l2 = 0.0 if l2_lambda is None else float(l2_lambda)
+
+        if l1_lambda is None and l2_lambda is None:
+            if regularization == "l1":
+                l1 = float(reg_lambda)
+            elif regularization == "l2":
+                l2 = float(reg_lambda)
+        else:
+            if regularization == "l1" and reg_lambda > 0 and l1_lambda is None:
+                l1 = float(reg_lambda)
+            if regularization == "l2" and reg_lambda > 0 and l2_lambda is None:
+                l2 = float(reg_lambda)
+
+        return max(0.0, l1), max(0.0, l2)
+
+    def _sync_regularization_aliases(self) -> None:
+        if self.l1_lambda > 0 and self.l2_lambda > 0:
+            self.regularization = "l1_l2"
+            self.reg_lambda = self.l1_lambda + self.l2_lambda
+        elif self.l1_lambda > 0:
+            self.regularization = "l1"
+            self.reg_lambda = self.l1_lambda
+        elif self.l2_lambda > 0:
+            self.regularization = "l2"
+            self.reg_lambda = self.l2_lambda
+        else:
+            self.regularization = None
+            self.reg_lambda = 0.0
 
     # ──────────────────────────────────────────────
     # Forward propagation
@@ -126,34 +180,76 @@ class NeuralNetwork:
                 d_out = layer.backward(d_out)
 
         # Add regularisation gradients
-        if self.regularization and self.reg_lambda > 0:
+        if self.l1_lambda > 0 or self.l2_lambda > 0:
             for layer in self.layers:
-                if self.regularization == "l1":
-                    layer.grad_weights += self.reg_lambda * np.sign(layer.weights)
-                elif self.regularization == "l2":
-                    layer.grad_weights += self.reg_lambda * layer.weights
+                if self.l1_lambda > 0:
+                    layer.grad_weights += self.l1_lambda * np.sign(layer.weights)
+                if self.l2_lambda > 0:
+                    layer.grad_weights += self.l2_lambda * layer.weights
 
     # ──────────────────────────────────────────────
     # Weight update (gradient descent)
     # ──────────────────────────────────────────────
-    def _update_weights(self, lr: float) -> None:
-        for layer in self.layers:
-            layer.weights -= lr * layer.grad_weights
-            layer.bias -= lr * layer.grad_bias
+    def _reset_optimizer_state(self) -> None:
+        self._adam_m_w = [np.zeros_like(layer.weights) for layer in self.layers]
+        self._adam_v_w = [np.zeros_like(layer.weights) for layer in self.layers]
+        self._adam_m_b = [np.zeros_like(layer.bias) for layer in self.layers]
+        self._adam_v_b = [np.zeros_like(layer.bias) for layer in self.layers]
+        self._adam_t = 0
+
+    def _update_weights(
+        self,
+        lr: float,
+        optimizer: str = "sgd",
+        beta1: float = 0.9,
+        beta2: float = 0.999,
+        epsilon: float = 1e-8,
+    ) -> None:
+        if optimizer == "sgd":
+            for layer in self.layers:
+                layer.weights -= lr * layer.grad_weights
+                layer.bias -= lr * layer.grad_bias
+            return
+
+        if optimizer != "adam":
+            raise ValueError(f"Unsupported optimizer '{optimizer}'. Use 'sgd' or 'adam'.")
+
+        if (
+            self._adam_m_w is None
+            or self._adam_v_w is None
+            or self._adam_m_b is None
+            or self._adam_v_b is None
+        ):
+            self._reset_optimizer_state()
+
+        self._adam_t += 1
+        for i, layer in enumerate(self.layers):
+            self._adam_m_w[i] = beta1 * self._adam_m_w[i] + (1.0 - beta1) * layer.grad_weights
+            self._adam_v_w[i] = beta2 * self._adam_v_w[i] + (1.0 - beta2) * (layer.grad_weights ** 2)
+            self._adam_m_b[i] = beta1 * self._adam_m_b[i] + (1.0 - beta1) * layer.grad_bias
+            self._adam_v_b[i] = beta2 * self._adam_v_b[i] + (1.0 - beta2) * (layer.grad_bias ** 2)
+
+            m_hat_w = self._adam_m_w[i] / (1.0 - beta1 ** self._adam_t)
+            v_hat_w = self._adam_v_w[i] / (1.0 - beta2 ** self._adam_t)
+            m_hat_b = self._adam_m_b[i] / (1.0 - beta1 ** self._adam_t)
+            v_hat_b = self._adam_v_b[i] / (1.0 - beta2 ** self._adam_t)
+
+            layer.weights -= lr * m_hat_w / (np.sqrt(v_hat_w) + epsilon)
+            layer.bias -= lr * m_hat_b / (np.sqrt(v_hat_b) + epsilon)
 
     # ──────────────────────────────────────────────
     # Compute loss (with optional regularisation term)
     # ──────────────────────────────────────────────
     def _compute_loss(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
         base_loss = self.loss_fn.forward(y_true, y_pred)
-        if self.regularization and self.reg_lambda > 0:
+        if self.l1_lambda > 0 or self.l2_lambda > 0:
             reg_term = 0.0
             for layer in self.layers:
-                if self.regularization == "l1":
-                    reg_term += np.sum(np.abs(layer.weights))
-                elif self.regularization == "l2":
-                    reg_term += np.sum(layer.weights ** 2)
-            base_loss += self.reg_lambda * reg_term
+                if self.l1_lambda > 0:
+                    reg_term += self.l1_lambda * np.sum(np.abs(layer.weights))
+                if self.l2_lambda > 0:
+                    reg_term += self.l2_lambda * np.sum(layer.weights ** 2)
+            base_loss += reg_term
         return base_loss
 
     # ──────────────────────────────────────────────
@@ -166,6 +262,10 @@ class NeuralNetwork:
         val_data: tuple[np.ndarray, np.ndarray] | None = None,
         batch_size: int = 32,
         learning_rate: float = 0.01,
+        optimizer: str = "sgd",
+        adam_beta1: float = 0.9,
+        adam_beta2: float = 0.999,
+        adam_epsilon: float = 1e-8,
         epochs: int = 100,
         verbose: int = 1,
     ) -> dict[str, list[float]]:
@@ -177,6 +277,18 @@ class NeuralNetwork:
         """
         X_train = np.asarray(X_train, dtype=np.float64)
         y_train = np.asarray(y_train, dtype=np.float64)
+        optimizer = optimizer.lower()
+        if optimizer not in {"sgd", "adam"}:
+            raise ValueError(f"Unsupported optimizer '{optimizer}'. Use 'sgd' or 'adam'.")
+        if optimizer == "adam":
+            self._reset_optimizer_state()
+        else:
+            self._adam_m_w = None
+            self._adam_v_w = None
+            self._adam_m_b = None
+            self._adam_v_b = None
+            self._adam_t = 0
+
         if val_data is not None:
             X_val = np.asarray(val_data[0], dtype=np.float64)
             y_val = np.asarray(val_data[1], dtype=np.float64)
@@ -201,7 +313,13 @@ class NeuralNetwork:
                 # Backward
                 self._backward(y_batch, y_pred)
                 # Update
-                self._update_weights(learning_rate)
+                self._update_weights(
+                    learning_rate,
+                    optimizer=optimizer,
+                    beta1=adam_beta1,
+                    beta2=adam_beta2,
+                    epsilon=adam_epsilon,
+                )
 
             # Epoch losses
             train_pred = self._forward(X_train)
@@ -280,6 +398,8 @@ class NeuralNetwork:
             "loss": self.loss_fn.name(),
             "regularization": self.regularization,
             "reg_lambda": self.reg_lambda,
+            "l1_lambda": self.l1_lambda,
+            "l2_lambda": self.l2_lambda,
             "layers": [layer.to_dict() for layer in self.layers],
         }
         with open(path, "w") as f:
@@ -300,6 +420,8 @@ class NeuralNetwork:
             loss=data["loss"],
             regularization=data.get("regularization"),
             reg_lambda=data.get("reg_lambda", 0.0),
+            l1_lambda=data.get("l1_lambda"),
+            l2_lambda=data.get("l2_lambda"),
         )
         # Restore saved weights
         for layer, ld in zip(model.layers, layer_dicts):
@@ -319,7 +441,11 @@ class NeuralNetwork:
             total += layer.num_params()
         lines.append("-" * 55)
         lines.append(f"  Loss       : {self.loss_fn.name()}")
-        lines.append(f"  Regularization: {self.regularization or 'None'} (λ={self.reg_lambda})")
+        if self.l1_lambda == 0.0 and self.l2_lambda == 0.0:
+            reg_summary = "None"
+        else:
+            reg_summary = f"L1={self.l1_lambda:g}, L2={self.l2_lambda:g}"
+        lines.append(f"  Regularization: {reg_summary}")
         lines.append(f"  Total params: {total}")
         lines.append("=" * 55)
         return "\n".join(lines)

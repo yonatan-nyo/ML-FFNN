@@ -32,6 +32,8 @@ class AutogradNeuralNetwork:
         initializer: Initializer | str | None = None,
         regularization: str | None = None,
         reg_lambda: float = 0.0,
+        l1_lambda: float | None = None,
+        l2_lambda: float | None = None,
         seed: int | None = None,
     ) -> None:
         assert len(activations) == len(layer_sizes) - 1, (
@@ -42,8 +44,13 @@ class AutogradNeuralNetwork:
             loss = get_loss(loss)
         self.loss_fn: Loss = loss
 
-        self.regularization = regularization
-        self.reg_lambda = reg_lambda
+        self.l1_lambda, self.l2_lambda = self._resolve_regularization(
+            regularization,
+            reg_lambda,
+            l1_lambda,
+            l2_lambda,
+        )
+        self._sync_regularization_aliases()
         self._root_rng = np.random.default_rng(seed)
         self._layer_sizes = layer_sizes
 
@@ -60,6 +67,49 @@ class AutogradNeuralNetwork:
                 )
             )
 
+        self._adam_m_w: list[np.ndarray] | None = None
+        self._adam_v_w: list[np.ndarray] | None = None
+        self._adam_m_b: list[np.ndarray] | None = None
+        self._adam_v_b: list[np.ndarray] | None = None
+        self._adam_t: int = 0
+
+    @staticmethod
+    def _resolve_regularization(
+        regularization: str | None,
+        reg_lambda: float,
+        l1_lambda: float | None,
+        l2_lambda: float | None,
+    ) -> tuple[float, float]:
+        l1 = 0.0 if l1_lambda is None else float(l1_lambda)
+        l2 = 0.0 if l2_lambda is None else float(l2_lambda)
+
+        if l1_lambda is None and l2_lambda is None:
+            if regularization == "l1":
+                l1 = float(reg_lambda)
+            elif regularization == "l2":
+                l2 = float(reg_lambda)
+        else:
+            if regularization == "l1" and reg_lambda > 0 and l1_lambda is None:
+                l1 = float(reg_lambda)
+            if regularization == "l2" and reg_lambda > 0 and l2_lambda is None:
+                l2 = float(reg_lambda)
+
+        return max(0.0, l1), max(0.0, l2)
+
+    def _sync_regularization_aliases(self) -> None:
+        if self.l1_lambda > 0 and self.l2_lambda > 0:
+            self.regularization = "l1_l2"
+            self.reg_lambda = self.l1_lambda + self.l2_lambda
+        elif self.l1_lambda > 0:
+            self.regularization = "l1"
+            self.reg_lambda = self.l1_lambda
+        elif self.l2_lambda > 0:
+            self.regularization = "l2"
+            self.reg_lambda = self.l2_lambda
+        else:
+            self.regularization = None
+            self.reg_lambda = 0.0
+
     # ── Forward ───────────────────────────────────────────────────────
 
     def _forward_tensor(self, X: Tensor) -> Tensor:
@@ -73,7 +123,23 @@ class AutogradNeuralNetwork:
 
     # ── Training step ─────────────────────────────────────────────────
 
-    def _train_step(self, X_batch: np.ndarray, y_batch: np.ndarray, lr: float) -> None:
+    def _reset_optimizer_state(self) -> None:
+        self._adam_m_w = [np.zeros_like(layer.W.data) for layer in self.layers]
+        self._adam_v_w = [np.zeros_like(layer.W.data) for layer in self.layers]
+        self._adam_m_b = [np.zeros_like(layer.b.data) for layer in self.layers]
+        self._adam_v_b = [np.zeros_like(layer.b.data) for layer in self.layers]
+        self._adam_t = 0
+
+    def _train_step(
+        self,
+        X_batch: np.ndarray,
+        y_batch: np.ndarray,
+        lr: float,
+        optimizer: str = "sgd",
+        beta1: float = 0.9,
+        beta2: float = 0.999,
+        epsilon: float = 1e-8,
+    ) -> None:
         for layer in self.layers:
             layer.zero_grad()
 
@@ -82,29 +148,57 @@ class AutogradNeuralNetwork:
         loss_t.backward()
 
         # Add regularisation directly to gradients (no graph needed)
-        if self.regularization and self.reg_lambda > 0:
+        if self.l1_lambda > 0 or self.l2_lambda > 0:
             for layer in self.layers:
-                if self.regularization == "l1":
-                    layer.W.grad += self.reg_lambda * np.sign(layer.W.data)
-                else:
-                    layer.W.grad += self.reg_lambda * layer.W.data
+                if self.l1_lambda > 0:
+                    layer.W.grad += self.l1_lambda * np.sign(layer.W.data)
+                if self.l2_lambda > 0:
+                    layer.W.grad += self.l2_lambda * layer.W.data
 
-        for layer in self.layers:
-            layer.W.data -= lr * layer.W.grad
-            layer.b.data -= lr * layer.b.grad
+        if optimizer == "sgd":
+            for layer in self.layers:
+                layer.W.data -= lr * layer.W.grad
+                layer.b.data -= lr * layer.b.grad
+            return
+
+        if optimizer != "adam":
+            raise ValueError(f"Unsupported optimizer '{optimizer}'. Use 'sgd' or 'adam'.")
+
+        if (
+            self._adam_m_w is None
+            or self._adam_v_w is None
+            or self._adam_m_b is None
+            or self._adam_v_b is None
+        ):
+            self._reset_optimizer_state()
+
+        self._adam_t += 1
+        for i, layer in enumerate(self.layers):
+            self._adam_m_w[i] = beta1 * self._adam_m_w[i] + (1.0 - beta1) * layer.W.grad
+            self._adam_v_w[i] = beta2 * self._adam_v_w[i] + (1.0 - beta2) * (layer.W.grad ** 2)
+            self._adam_m_b[i] = beta1 * self._adam_m_b[i] + (1.0 - beta1) * layer.b.grad
+            self._adam_v_b[i] = beta2 * self._adam_v_b[i] + (1.0 - beta2) * (layer.b.grad ** 2)
+
+            m_hat_w = self._adam_m_w[i] / (1.0 - beta1 ** self._adam_t)
+            v_hat_w = self._adam_v_w[i] / (1.0 - beta2 ** self._adam_t)
+            m_hat_b = self._adam_m_b[i] / (1.0 - beta1 ** self._adam_t)
+            v_hat_b = self._adam_v_b[i] / (1.0 - beta2 ** self._adam_t)
+
+            layer.W.data -= lr * m_hat_w / (np.sqrt(v_hat_w) + epsilon)
+            layer.b.data -= lr * m_hat_b / (np.sqrt(v_hat_b) + epsilon)
 
     # ── Loss (numpy scalar, for reporting) ────────────────────────────
 
     def _compute_loss(self, y_true: np.ndarray, y_pred: np.ndarray) -> float:
         base = self.loss_fn.forward(y_true, y_pred)
-        if self.regularization and self.reg_lambda > 0:
+        if self.l1_lambda > 0 or self.l2_lambda > 0:
             reg = 0.0
             for layer in self.layers:
-                if self.regularization == "l1":
-                    reg += float(np.sum(np.abs(layer.W.data)))
-                else:
-                    reg += float(np.sum(layer.W.data ** 2))
-            base += self.reg_lambda * reg
+                if self.l1_lambda > 0:
+                    reg += self.l1_lambda * float(np.sum(np.abs(layer.W.data)))
+                if self.l2_lambda > 0:
+                    reg += self.l2_lambda * float(np.sum(layer.W.data ** 2))
+            base += reg
         return base
 
     # ── Fit ───────────────────────────────────────────────────────────
@@ -116,11 +210,27 @@ class AutogradNeuralNetwork:
         val_data: tuple[np.ndarray, np.ndarray] | None = None,
         batch_size: int = 32,
         learning_rate: float = 0.01,
+        optimizer: str = "sgd",
+        adam_beta1: float = 0.9,
+        adam_beta2: float = 0.999,
+        adam_epsilon: float = 1e-8,
         epochs: int = 100,
         verbose: int = 1,
     ) -> dict[str, list[float]]:
         X_train = np.asarray(X_train, dtype=np.float64)
         y_train = np.asarray(y_train, dtype=np.float64)
+        optimizer = optimizer.lower()
+        if optimizer not in {"sgd", "adam"}:
+            raise ValueError(f"Unsupported optimizer '{optimizer}'. Use 'sgd' or 'adam'.")
+        if optimizer == "adam":
+            self._reset_optimizer_state()
+        else:
+            self._adam_m_w = None
+            self._adam_v_w = None
+            self._adam_m_b = None
+            self._adam_v_b = None
+            self._adam_t = 0
+
         if val_data is not None:
             X_val = np.asarray(val_data[0], dtype=np.float64)
             y_val = np.asarray(val_data[1], dtype=np.float64)
@@ -134,7 +244,15 @@ class AutogradNeuralNetwork:
 
             for start in range(0, n, batch_size):
                 end = min(start + batch_size, n)
-                self._train_step(X_s[start:end], y_s[start:end], learning_rate)
+                self._train_step(
+                    X_s[start:end],
+                    y_s[start:end],
+                    learning_rate,
+                    optimizer=optimizer,
+                    beta1=adam_beta1,
+                    beta2=adam_beta2,
+                    epsilon=adam_epsilon,
+                )
 
             train_pred = self.predict(X_train)
             train_loss = self._compute_loss(y_train, train_pred)
@@ -206,6 +324,8 @@ class AutogradNeuralNetwork:
             "loss": self.loss_fn.name(),
             "regularization": self.regularization,
             "reg_lambda": self.reg_lambda,
+            "l1_lambda": self.l1_lambda,
+            "l2_lambda": self.l2_lambda,
             "layers": [layer.to_dict() for layer in self.layers],
         }
         with open(path, "w") as f:
@@ -222,6 +342,8 @@ class AutogradNeuralNetwork:
             loss=data["loss"],
             regularization=data.get("regularization"),
             reg_lambda=data.get("reg_lambda", 0.0),
+            l1_lambda=data.get("l1_lambda"),
+            l2_lambda=data.get("l2_lambda"),
         )
         net.layers = [AutogradDense.from_dict(d) for d in data["layers"]]
         return net
@@ -236,7 +358,11 @@ class AutogradNeuralNetwork:
             total += layer.num_params()
         lines.append("-" * 55)
         lines.append(f"  Loss          : {self.loss_fn.name()}")
-        lines.append(f"  Regularization: {self.regularization or 'None'} (λ={self.reg_lambda})")
+        if self.l1_lambda == 0.0 and self.l2_lambda == 0.0:
+            reg_summary = "None"
+        else:
+            reg_summary = f"L1={self.l1_lambda:g}, L2={self.l2_lambda:g}"
+        lines.append(f"  Regularization: {reg_summary}")
         lines.append(f"  Total params  : {total}")
         lines.append("=" * 55)
         return "\n".join(lines)
