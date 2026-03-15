@@ -222,6 +222,8 @@ class NeuralNetwork:
         ):
             self._reset_optimizer_state()
 
+        # Adam moments and bias-correction reference:
+        # https://www.geeksforgeeks.org/deep-learning/adam-optimizer/
         self._adam_t += 1
         for i, layer in enumerate(self.layers):
             self._adam_m_w[i] = beta1 * self._adam_m_w[i] + (1.0 - beta1) * layer.grad_weights
