@@ -24,8 +24,13 @@ class LossFunction:
         y_list_length = len(y_true)
         if (y_list_length != len(y_pred)):
             raise ValueError("Length of y_true and y_pred must be the same.")
-        # TODO: Implement the derivative of the MSE function
-        pass
+        
+        ret = []
+        for i in range(y_list_length):
+            # Derivative of MSE: 2 * (y_pred - y_true) / N
+            grad = 2 * (y_pred[i] - y_true[i])
+            ret.append(grad / y_list_length)
+        return ret
 
     @staticmethod
     def binary_cross_entropy(y_true: List[float], y_pred: List[float]) -> float:
@@ -46,8 +51,16 @@ class LossFunction:
         if (y_list_length != len(y_pred)):
             raise ValueError("Length of y_true and y_pred must be the same.")
 
-        # TODO: Implement the derivative of the binary cross-entropy function
-        pass
+        ret = []
+        eps = 1e-15 # Mencegah ZeroDivisionError
+        for i in range(y_list_length):
+            y_p = max(min(y_pred[i], 1 - eps), eps)
+            y_t = y_true[i]
+            
+            # Turunan BCE: (-y/y_pred + (1-y)/(1-y_pred)) / N
+            grad = -(y_t / y_p) + ((1 - y_t) / (1 - y_p))
+            ret.append(grad / y_list_length)
+        return ret
 
     @staticmethod
     def categorical_cross_entropy(y_true: List[List[float]], y_pred: List[List[float]]) -> float:
@@ -72,5 +85,20 @@ class LossFunction:
         if (y_list_length != len(y_pred)):
             raise ValueError("Length of y_true and y_pred must be the same.")
 
-        # TODO: Implement the derivative of the categorical cross-entropy function
-        pass
+        ret = []
+        eps = 1e-15 # Mencegah ZeroDivisionError
+        for i in range(y_list_length):
+            category_count = len(y_true[i])
+            if (len(y_true[i]) != len(y_pred[i])):
+                raise ValueError("Number of categories in y_true and y_pred must be the same.")
+
+            row_ret = []
+            for j in range(category_count):
+                y_p = max(min(y_pred[i][j], 1 - eps), eps)
+                y_t = y_true[i][j]
+                
+                # Turunan CCE: (-y/y_pred) / N
+                grad = -(y_t / y_p)
+                row_ret.append(grad / y_list_length)
+            ret.append(row_ret)
+        return ret

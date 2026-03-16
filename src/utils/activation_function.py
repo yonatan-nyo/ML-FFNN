@@ -54,6 +54,15 @@ class ActivationFunction:
         return [softmax_i(x_i, denominator) for x_i in x]
 
     @staticmethod
-    def derivative_softmax(x: List[float]) -> List[float]:
-        # TODO: Implement the derivative of the softmax function
-        pass
+    def derivative_softmax(x: List[float]) -> List[List[float]]:
+        s = ActivationFunction.softmax(x)
+        jacobian = []
+        for i in range(len(s)):
+            row = []
+            for j in range(len(s)):
+                if i == j:
+                    row.append(s[i] * (1 - s[i]))
+                else:
+                    row.append(-s[i] * s[j])
+            jacobian.append(row)
+        return jacobian

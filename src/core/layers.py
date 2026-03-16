@@ -131,7 +131,6 @@ class RMSNorm:
         self.gamma: np.ndarray = np.ones((1, input_dim))
         self.grad_gamma: np.ndarray = np.zeros_like(self.gamma)
         
-        # We don't use bias in standard RMSNorm as per the paper, only scale.
         
         # Caches for backward pass
         self._input: np.ndarray | None = None
